@@ -33,7 +33,22 @@ class GooglePasswordChanger:
         co.set_argument('--no-default-browser-check')
         co.set_argument('--disable-popup-blocking')
         co.set_argument('--disable-infobars')
-        return ChromiumPage(addr_or_opts=co)
+
+        # ── Anti-detection for headless mode ──
+        # Override default HeadlessChrome user-agent to look like a real browser
+        co.set_argument(
+            '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+            'AppleWebKit/537.36 (KHTML, like Gecko) '
+            'Chrome/131.0.0.0 Safari/537.36'
+        )
+        # Set a realistic window size (headless defaults to 800x600 or 0x0)
+        co.set_argument('--window-size=1920,1080')
+        # Hide automation indicators without triggering Chrome warning bars
+        co.set_pref('excludeSwitches', ['enable-automation'])
+        co.set_pref('useAutomationExtension', False)
+
+        page = ChromiumPage(addr_or_opts=co)
+        return page
 
     def _random_sleep(self, min_s=0.3, max_s=0.8):
         """Random delay to mimic human pauses."""
@@ -476,6 +491,13 @@ class GooglePasswordChanger:
                 "https://accounts.google.com/signin/v2/identifier"
                 "?flowName=GlifWebSignIn&flowEntry=ServiceLogin"
             )
+            # Re-inject stealth JS after navigation (each nav resets JS context)
+            try:
+                page.run_js(
+                    'Object.defineProperty(navigator, "webdriver", {get: () => undefined})'
+                )
+            except Exception:
+                pass
             self._random_sleep(0.3, 0.6)
 
             try:
