@@ -65,7 +65,7 @@ class MainApplication(ctk.CTk):
         ctk.CTkLabel(title_frame, text="Gemini Account Manager",
                      font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
                      text_color=("gray15", "gray95")).pack(anchor="w")
-        ctk.CTkLabel(title_frame, text="v1.0",
+        ctk.CTkLabel(title_frame, text="v1.0.1",
                      font=ctk.CTkFont(size=11, weight="bold"),
                      text_color=("#3498db", "#5dade2")).pack(anchor="w")
 
