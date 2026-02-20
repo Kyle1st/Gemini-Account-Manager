@@ -1,0 +1,62 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+.env
+.venv
+ENV/
+env.bak/
+venv.bak/
+
+# IDE files
+.vscode/
+.idea/
+.claude/
+.gemini/
+*.swp
+*.swo
+
+# Project specific: CRITICAL PRIVACY FILES
+accounts_data.json
+*.xlsx
+*.xls
+*.csv
+# logs or records
+*.log
+
+# DrissionPage/Chromium traces
+dp_user_data/
+drission_page/
+
+# Build artifacts
+*.spec
+*.zip
+icon.png
+installer_output/
