@@ -22,7 +22,7 @@ Gemini Account Manager 是一款基于 Python 和 CustomTkinter 开发的开源 
 ## 📥 下载使用
 
 ### 方式一：直接下载（推荐普通用户）
-前往 [Releases](https://github.com/Kyle1st/Gemini-Account-Manager/releases) 页面，下载最新版本的 **`GeminiAccountManager_v1.0_Windows.zip`**。
+前往 [Releases](https://github.com/Kyle1st/Gemini-Account-Manager/releases) 页面，下载最新版本的 **`GeminiAccountManager_v1.1.0_Windows.zip`**。
 
 解压后双击 `GeminiAccountManager.exe` 即可运行，**无需安装 Python 环境**。
 
@@ -45,6 +45,18 @@ pip install pyinstaller
 .\build.bat
 ```
 打包产物输出至 `dist\GeminiAccountManager\` 目录。
+
+## 🔄 版本升级与数据迁移
+
+所有账号数据保存在程序同目录下的 `accounts_data.json` 文件中。升级新版本时，请按以下方式保留数据：
+
+| 升级方式 | 操作步骤 |
+| :--- | :--- |
+| **覆盖升级**（推荐） | 将新版 zip 解压到**原目录覆盖**，`accounts_data.json` 不在压缩包内，数据自动保留 |
+| **全新目录安装** | 将旧目录下的 `accounts_data.json` 复制到新目录即可 |
+| **软件内备份恢复** | 旧版本点击工具栏 `📥 备份数据` 导出 → 新版本点击 `📤 恢复数据` 导入 |
+
+> **提示**：建议每次升级前先通过 `📥 备份数据` 功能备份一份，以防万一。
 
 ## 📂 项目结构
 

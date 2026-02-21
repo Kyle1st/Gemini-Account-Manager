@@ -72,7 +72,7 @@ class CheckAIStudentParallelTab:
         self.keep_open_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(
             opt_frame2,
-            text="🕶️ 完成后保留浏览器",
+            text="完成后保留浏览器",
             variable=self.keep_open_var,
             font=ctk.CTkFont(size=13), checkbox_width=22, checkbox_height=22, corner_radius=4
         ).pack(side="left")

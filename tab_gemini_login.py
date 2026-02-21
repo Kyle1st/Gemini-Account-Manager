@@ -11,8 +11,8 @@ from google_pw_changer import GooglePasswordChanger
 from ui_account_selector import AccountSelectionPanel
 
 
-class ClosePaymentParallelTab:
-    """批量并发关闭支付资料 Tab：接入 AccountSelectionPanel，支持并发关闭支付资料。"""
+class GeminiLoginTab:
+    """批量并发自动登录 Gemini Tab：接入 AccountSelectionPanel，支持并发登录 gemini.google.com。"""
 
     def __init__(self, parent, account_manager: AccountManager,
                  log_callback, status_callback, on_data_changed):
@@ -39,7 +39,7 @@ class ClosePaymentParallelTab:
         config_card = ctk.CTkFrame(right, fg_color=("gray95", "gray20"), corner_radius=10)
         config_card.pack(fill="x", pady=(0, 12))
 
-        ctk.CTkLabel(config_card, text="⚙️ 参数配置", 
+        ctk.CTkLabel(config_card, text="⚙️ 参数配置",
                      font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold")).pack(anchor="w", padx=18, pady=(12, 8))
 
         opt_frame = ctk.CTkFrame(config_card, fg_color="transparent")
@@ -49,12 +49,12 @@ class ClosePaymentParallelTab:
         self.workers_var = ctk.IntVar(value=3)
         self.workers_label = ctk.CTkLabel(opt_frame, text="3", width=24, font=ctk.CTkFont(size=14, weight="bold"))
         self.workers_label.pack(side="left", padx=(5, 0))
-        
+
         ctk.CTkSlider(
             opt_frame, from_=1, to=8, number_of_steps=7,
             variable=self.workers_var, width=180, height=20
         ).pack(side="left", padx=(8, 20))
-        
+
         self.workers_var.trace_add(
             "write", lambda *_: self.workers_label.configure(text=str(int(float(self.workers_var.get()))))
         )
@@ -69,7 +69,7 @@ class ClosePaymentParallelTab:
         opt_frame2 = ctk.CTkFrame(config_card, fg_color="transparent")
         opt_frame2.pack(fill="x", padx=18, pady=(0, 14))
 
-        self.keep_open_var = ctk.BooleanVar(value=False)
+        self.keep_open_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(
             opt_frame2,
             text="完成后保留浏览器",
@@ -81,13 +81,12 @@ class ClosePaymentParallelTab:
         action_card = ctk.CTkFrame(right, fg_color=("gray95", "gray20"), corner_radius=10)
         action_card.pack(fill="x", pady=(0, 12))
 
-        ctk.CTkLabel(action_card, text="🚀 操作控制", 
+        ctk.CTkLabel(action_card, text="🚀 操作控制",
                      font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold")).pack(anchor="w", padx=18, pady=(12, 8))
-        
-        # Helper text inside card
+
         ctk.CTkLabel(
             action_card,
-            text="ℹ️ 功能：自动登录账号并关闭支付资料 (Close Payments Profile)",
+            text="ℹ️ 功能：自动登录 Google 账号并跳转到 gemini.google.com",
             font=ctk.CTkFont(size=12), text_color=("gray50", "gray70")
         ).pack(anchor="w", padx=18, pady=(0, 8))
 
@@ -95,9 +94,9 @@ class ClosePaymentParallelTab:
         btn_frame.pack(fill="x", padx=18, pady=(0, 18))
 
         self.real_btn = ctk.CTkButton(
-            btn_frame, text="▶ 执行并发关闭", width=160, height=42,
+            btn_frame, text="▶ 执行并发登录", width=160, height=42,
             font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
-            fg_color="#e74c3c", hover_color="#c0392b", corner_radius=8,
+            fg_color="#27ae60", hover_color="#1e8449", corner_radius=8,
             command=self._on_start_parallel,
         )
         self.real_btn.pack(side="left")
@@ -109,30 +108,22 @@ class ClosePaymentParallelTab:
             state="disabled", command=self._on_stop,
         )
         self.stop_btn.pack(side="left", padx=12)
-        
-        ctk.CTkButton(
-            btn_frame, text="📥 加载选中账号", width=130, height=42,
-            font=ctk.CTkFont(family="Segoe UI", size=14),
-            fg_color="gray60", hover_color="gray50", corner_radius=8,
-            command=self._on_load_selected,
-        ).pack(side="left")
 
         ctk.CTkButton(
             btn_frame, text="📋 复制结果", width=110, height=42,
             font=ctk.CTkFont(family="Segoe UI", size=14),
             fg_color="gray60", hover_color="gray50", corner_radius=8,
             command=self._copy_result,
-        ).pack(side="left", padx=(12, 0))
+        ).pack(side="left")
 
         # 3. Progress & Log
         log_frame = ctk.CTkFrame(right, fg_color="transparent")
         log_frame.pack(fill="both", expand=True)
-        
+
         self.progress_var = ctk.StringVar(value="准备就绪")
         ctk.CTkLabel(log_frame, textvariable=self.progress_var, anchor="w",
                      font=ctk.CTkFont(size=13), text_color="gray70").pack(fill="x", pady=(0, 6))
 
-        # Textbox
         self.textbox = ctk.CTkTextbox(
             log_frame, font=ctk.CTkFont(family="Consolas", size=13), corner_radius=8
         )
@@ -143,16 +134,6 @@ class ClosePaymentParallelTab:
         self._stop_flag = False
         self._completed_count = 0
         self._total_count = 0
-
-    def _on_load_selected(self):
-        accounts = self.selector.get_selected_accounts()
-        if not accounts:
-            messagebox.showwarning("提示", "请先在左侧勾选账号")
-            return
-        self.textbox.delete("1.0", "end")
-        lines = [AccountManager.format_line(acc) for acc in accounts]
-        self.textbox.insert("1.0", "\n".join(lines))
-        self.status_callback(f"已加载 {len(accounts)} 个账号")
 
     def _copy_result(self):
         text = self.textbox.get("1.0", "end").strip()
@@ -167,7 +148,7 @@ class ClosePaymentParallelTab:
 
         accounts = self.selector.get_selected_accounts()
         if not accounts:
-            messagebox.showwarning("提示", "请先在左侧勾选需要操作的账号")
+            messagebox.showwarning("提示", "请先在左侧勾选需要登录的账号")
             return
 
         workers = int(float(self.workers_var.get()))
@@ -176,9 +157,10 @@ class ClosePaymentParallelTab:
 
         if not messagebox.askyesno(
             "确认",
-            f"即将为 {len(accounts)} 个 Google 账号并发关闭支付资料。\n"
+            f"即将为 {len(accounts)} 个 Google 账号并发登录 Gemini。\n"
             f"并发数: {workers}\n"
-            f"模式: {'后台静默' if self.headless_var.get() else '显示浏览器'}\n\n"
+            f"模式: {'后台静默' if self.headless_var.get() else '显示浏览器'}\n"
+            f"完成后: {'保留浏览器' if self.keep_open_var.get() else '自动关闭'}\n\n"
             "确定要继续吗？",
         ):
             return
@@ -192,8 +174,8 @@ class ClosePaymentParallelTab:
         self.stop_btn.configure(state="normal")
         self.progress_var.set(f"准备中... 共 {len(accounts)} 个账号")
         self.textbox.delete("1.0", "end")
-        
-        self.log_callback(f"━━━ 开始多并发关闭支付资料：共 {len(accounts)} 个账号，并发数 {workers} ━━━")
+
+        self.log_callback(f"━━━ 开始多并发登录 Gemini：共 {len(accounts)} 个账号，并发数 {workers} ━━━")
 
         threading.Thread(
             target=self._run_thread,
@@ -202,7 +184,8 @@ class ClosePaymentParallelTab:
         ).start()
         self._check_queue()
 
-    def _run_thread(self, accounts: list[dict], max_workers: int, headless: bool, keep_browser_open: bool):
+    def _run_thread(self, accounts: list[dict], max_workers: int,
+                    headless: bool, keep_browser_open: bool):
         total = len(accounts)
         results: list[dict | None] = [None] * total
 
@@ -222,7 +205,7 @@ class ClosePaymentParallelTab:
             )
 
             changer = GooglePasswordChanger(headless=headless)
-            return changer.login_and_close_payments(
+            return changer.login_to_gemini(
                 email=acc["email"],
                 password=acc["password"],
                 totp_secret=acc.get("totp_secret", ""),
@@ -299,8 +282,8 @@ class ClosePaymentParallelTab:
                 if kind == "progress":
                     _, idx, total, email, status = msg
                     self.progress_var.set(f"[{idx+1}/{total}] {email}: {status}")
-                    self.status_callback(f"关闭支付资料进度: {self._completed_count}/{self._total_count}")
-                    self.log_callback(f"[关闭支付资料 {idx+1}/{total}] {status}")
+                    self.status_callback(f"Gemini 登录进度: {self._completed_count}/{self._total_count}")
+                    self.log_callback(f"[Gemini 登录 {idx+1}/{total}] {status}")
 
                 elif kind == "item_done":
                     _, idx, total, email, ok, detail = msg
@@ -309,7 +292,7 @@ class ClosePaymentParallelTab:
                     self.progress_var.set(
                         f"进度 {self._completed_count}/{self._total_count} | {email}: {short}"
                     )
-                    self.log_callback(f"[关闭支付资料 {idx+1}/{total}] {email}: {short} {detail}")
+                    self.log_callback(f"[Gemini 登录 {idx+1}/{total}] {email}: {short} {detail}")
 
                 elif kind == "done":
                     self._on_finished(msg[1])
@@ -328,20 +311,18 @@ class ClosePaymentParallelTab:
 
         success = sum(1 for r in results if r["success"])
         failed = len(results) - success
-        self.log_callback(f"━━━ 多并发关闭支付资料完成：成功 {success}, 失败 {failed} ━━━")
+        self.log_callback(f"━━━ 多并发登录 Gemini 完成：成功 {success}, 失败 {failed} ━━━")
 
         self.textbox.delete("1.0", "end")
         summary = "\n".join(
              f"{r['email']} - {'✅ ' + r.get('message', '成功') if r['success'] else '❌ ' + r.get('message', '失败')}"
              for r in results
         )
-        
+
         self.textbox.insert("1.0", summary)
-        
+
         self.progress_var.set(f"完成! 成功 {success}, 失败 {failed}")
-        self.on_data_changed()
-        self.selector.refresh()
-        messagebox.showinfo("多并发关闭支付资料完成", f"成功: {success}\n失败: {failed}\n\n{summary[:500]}...")
+        messagebox.showinfo("多并发登录 Gemini 完成", f"成功: {success}\n失败: {failed}\n\n{summary[:500]}...")
 
     def _on_stop(self):
         if self._running:

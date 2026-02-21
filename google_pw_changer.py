@@ -1728,6 +1728,66 @@ class GooglePasswordChanger:
 
         return result
 
+    def login_to_gemini(
+        self,
+        email: str,
+        password: str,
+        totp_secret: str,
+        callback: Optional[Callable[[str], None]] = None,
+        keep_browser_open: bool = False,
+    ) -> dict:
+        """
+        Standalone flow: Login -> Navigate to gemini.google.com.
+        Returns: {"email": str, "success": bool, "message": str}
+        """
+        def _log(msg: str):
+            if callback:
+                callback(msg)
+
+        result = {"email": email, "success": False, "message": ""}
+        page = None
+
+        try:
+            page = self._create_page()
+
+            # 1. Login
+            _log(f"[{email}] 正在登录 Google...")
+            self._login(page, email, password, totp_secret, _log)
+
+            # 2. Navigate to Gemini
+            _log(f"[{email}] 正在跳转到 Gemini...")
+            page.get("https://gemini.google.com")
+            self._random_sleep(2.0, 3.0)
+
+            # 3. Verify we reached Gemini
+            current_url = page.url.lower()
+            if "gemini.google.com" in current_url:
+                result["success"] = True
+                result["message"] = "已成功登录 Gemini"
+                _log(f"[{email}] ✅ 已成功登录 Gemini")
+            else:
+                # Check for common redirect issues
+                result["message"] = f"跳转异常，当前页面: {page.url[:100]}"
+                _log(f"[{email}] ⚠ {result['message']}")
+
+        except Exception as e:
+            error_msg = str(e)
+            if "timeout" in error_msg.lower():
+                result["message"] = "操作超时，可能是网络问题或页面结构变化"
+            else:
+                result["message"] = f"操作失败: {error_msg[:200]}"
+            _log(f"[{email}] 失败: {result['message']}")
+
+        finally:
+            if page and not keep_browser_open:
+                try:
+                    page.quit()
+                except Exception:
+                    pass
+
+        return result
+
+
     def login_and_check_ai_student(
         self,
         email: str,

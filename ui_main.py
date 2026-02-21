@@ -13,6 +13,7 @@ from tab_family_parallel import FamilyParallelTab
 from tab_close_payment_parallel import ClosePaymentParallelTab
 from tab_check_ai_student_parallel import CheckAIStudentParallelTab
 from tab_batch_import import BatchImportTab
+from tab_gemini_login import GeminiLoginTab
 from tab_log import LogTab
 
 
@@ -65,7 +66,7 @@ class MainApplication(ctk.CTk):
         ctk.CTkLabel(title_frame, text="Gemini Account Manager",
                      font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
                      text_color=("gray15", "gray95")).pack(anchor="w")
-        ctk.CTkLabel(title_frame, text="v1.0.1",
+        ctk.CTkLabel(title_frame, text="v1.1.0",
                      font=ctk.CTkFont(size=11, weight="bold"),
                      text_color=("#3498db", "#5dade2")).pack(anchor="w")
 
@@ -180,6 +181,7 @@ class MainApplication(ctk.CTk):
         common_args = (self.account_manager, _log_append,
                        self._update_status, self._update_status_count)
 
+        self.gemini_login_tab = GeminiLoginTab(self.tabview.add("🌐 Gemini 登录"), *common_args)
         self.pwchange_parallel_tab = PwChangeParallelTab(self.tabview.add("🔑 批量改密"), *common_args)
         self.totp_parallel_tab = TotpParallelTab(self.tabview.add("🔒 批量改2FA"), *common_args)
         
@@ -225,6 +227,8 @@ class MainApplication(ctk.CTk):
         # 刷新各子系统的账号列表
         if hasattr(self, 'manage_tab'):
             self.manage_tab.refresh()
+        if hasattr(self, 'gemini_login_tab'):
+            self.gemini_login_tab.selector.refresh()
         if hasattr(self, 'pwchange_parallel_tab'):
             self.pwchange_parallel_tab.selector.refresh()
         if hasattr(self, 'totp_parallel_tab'):
