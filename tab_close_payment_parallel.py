@@ -228,6 +228,7 @@ class ClosePaymentParallelTab:
                 totp_secret=acc.get("totp_secret", ""),
                 callback=step_cb,
                 keep_browser_open=keep_browser_open,
+                cookies=acc.get("cookies"),
             )
 
         futures: dict = {}
@@ -260,6 +261,10 @@ class ClosePaymentParallelTab:
                         }
 
                     results[idx] = result
+
+                    # Save cookies if returned
+                    if result.get("cookies"):
+                        self._queue.put(("save_cookies", acc["email"], result["cookies"]))
 
                     self._queue.put(
                         (
@@ -310,6 +315,10 @@ class ClosePaymentParallelTab:
                         f"进度 {self._completed_count}/{self._total_count} | {email}: {short}"
                     )
                     self.log_callback(f"[关闭支付资料 {idx+1}/{total}] {email}: {short} {detail}")
+
+                elif kind == "save_cookies":
+                    _, email, cookies = msg
+                    self.account_manager.save_cookies(email, cookies)
 
                 elif kind == "done":
                     self._on_finished(msg[1])

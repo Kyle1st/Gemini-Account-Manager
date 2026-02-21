@@ -70,6 +70,32 @@ class AccountDetailPanel(ctk.CTkScrollableFrame):
                       font=ctk.CTkFont(size=12),
                       command=self._on_generate_password).pack(side="left")
 
+        # Tags
+        ctk.CTkLabel(self, text="账号标签", font=label_font, fg_color=("gray95", "gray15")).pack(anchor="w", padx=20, pady=(0, 3))
+        tag_frame = ctk.CTkFrame(self, fg_color=("gray95", "gray15"))
+        tag_frame.pack(fill="x", padx=20, pady=(0, 12))
+        self.tag_vars: dict[str, ctk.BooleanVar] = {}
+        tag_colors = {"家庭组": "#2980b9", "成品号": "#27ae60", "资格号": "#8e44ad"}
+        for tag_name in TAG_OPTIONS:
+            var = ctk.BooleanVar(value=False)
+            self.tag_vars[tag_name] = var
+            ctk.CTkCheckBox(
+                tag_frame, text=tag_name, variable=var,
+                font=ctk.CTkFont(size=12), checkbox_width=20, checkbox_height=20,
+                corner_radius=4, fg_color=tag_colors.get(tag_name, "#3498db"),
+                hover_color=tag_colors.get(tag_name, "#3498db"), bg_color=("gray95", "gray15")
+            ).pack(side="left", padx=(0, 15))
+
+        self.cookie_var = ctk.BooleanVar(value=False)
+        self.cookie_checkbox = ctk.CTkCheckBox(
+            tag_frame, text="已存 Cookie", variable=self.cookie_var,
+            font=ctk.CTkFont(size=12), checkbox_width=20, checkbox_height=20,
+            corner_radius=4, fg_color="#e67e22", hover_color="#d35400",
+            bg_color=("gray95", "gray15"), state="disabled",
+            text_color=("gray10", "gray90"), text_color_disabled=("gray10", "gray90")
+        )
+        self.cookie_checkbox.pack(side="left", padx=(10, 0))
+
         # Recovery email
         ctk.CTkLabel(self, text="辅助邮箱", font=label_font, fg_color=("gray95", "gray15")).pack(anchor="w", padx=20, pady=(0, 3))
         self.recovery_var = ctk.StringVar()
@@ -95,21 +121,6 @@ class AccountDetailPanel(ctk.CTkScrollableFrame):
         self.totp_display = TOTPDisplay(self, status_callback=self.status_callback)
         self.totp_display.pack(fill="x", padx=20, pady=(0, 12))
 
-        # Tags
-        ctk.CTkLabel(self, text="账号标签", font=label_font, fg_color=("gray95", "gray15")).pack(anchor="w", padx=20, pady=(0, 3))
-        tag_frame = ctk.CTkFrame(self, fg_color=("gray95", "gray15"))
-        tag_frame.pack(fill="x", padx=20, pady=(0, 12))
-        self.tag_vars: dict[str, ctk.BooleanVar] = {}
-        tag_colors = {"家庭组": "#2980b9", "成品号": "#27ae60", "资格号": "#8e44ad"}
-        for tag_name in TAG_OPTIONS:
-            var = ctk.BooleanVar(value=False)
-            self.tag_vars[tag_name] = var
-            ctk.CTkCheckBox(
-                tag_frame, text=tag_name, variable=var,
-                font=ctk.CTkFont(size=12), checkbox_width=20, checkbox_height=20,
-                corner_radius=4, fg_color=tag_colors.get(tag_name, "#3498db"),
-                hover_color=tag_colors.get(tag_name, "#3498db"), bg_color=("gray95", "gray15")
-            ).pack(side="left", padx=(0, 15))
 
         # Notes
         ctk.CTkLabel(self, text="备注", font=label_font, fg_color=("gray95", "gray15")).pack(anchor="w", padx=20, pady=(0, 3))
@@ -141,6 +152,9 @@ class AccountDetailPanel(ctk.CTkScrollableFrame):
         acc_tags = acc.get("tags", [])
         for tag_name, var in self.tag_vars.items():
             var.set(tag_name in acc_tags)
+            
+        # Load Cookie status
+        self.cookie_var.set(bool(acc.get("cookies")))
         self.notes_textbox.delete("1.0", "end")
         self.notes_textbox.insert("1.0", acc.get("notes", ""))
 
@@ -153,6 +167,7 @@ class AccountDetailPanel(ctk.CTkScrollableFrame):
         self.totp_var.set("")
         for var in self.tag_vars.values():
             var.set(False)
+        self.cookie_var.set(False)
         self.notes_textbox.delete("1.0", "end")
         self.totp_display.clear()
 

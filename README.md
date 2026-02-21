@@ -9,8 +9,10 @@ Gemini Account Manager 是一款基于 Python 和 CustomTkinter 开发的开源 
   - **标签分类系统**：支持为账号打上 `家庭组`、`成品号`、`资格号` 等 Emoji 标签，在列表中直观展示并支持组合筛选。
   - **快速导入与导出**：支持 `邮箱----密码----辅助邮箱----TOTP密钥` 的标准格式实现文本批量导入；支持通过 Excel 进行双向导入导出。
   - **TOTP 验证码生成**：内置 TOTP 引擎，选中账号即可秒级生成最新的 6 位 2FA 动态验证码，带倒计时进度条。
-- **⚡ 多线程并发运维** (使用隐身/无痕模式浏览器)
-  - **底层完全无痕化**：所有基于 `DrissionPage` 的自动化任务现在均默认在 Chromium 的**无痕模式 (Incognito)** 下运行，最大限度防止账号历史数据串流和提高安全性。
+- **⚡ 多线程并发运维** (支持实时终止与可视化进度)
+  - **并发控制系统**：多操作界面集成全局「终止执行」按钮，遭遇异常风控可随时急停任务；详细的控制台/状态栏实时输出运行步骤。
+  - **手动提取与管理 Cookie**：针对无 2FA 密钥且频繁触发风控的账号，提供手动开启带界面浏览器的入口，完成验证后自动提取持久保存 Cookie 数据入库，大大提高下次自动化流程通过率。
+  - **底层完全无痕化**：所有基于 `DrissionPage` 的自动化任务（查资格、改密码等）现在默认在 Chromium 的**无痕模式 (Incognito)** 下运行，搭配高级反检测策略 (伪造特征、覆盖环境等) ，最大限度防止 Google 的自动化检测与拦截。
   - **批量查询 AI Student 资格 (智能提取)**：内置正则表达式与多层 DOM 树回退策略，0 秒内从 Google Promo 页面提取并打印真正的 "**Verify eligibility**" (SheerID 验证网址) 或直接反馈账号是否满足条件。
   - **密码及验证自动化**：并发登录多号自动修改密码，自动设置两步验证并抓取保存 Base32 密钥。
   - **批量关闭支付资料 / 创建家庭组**：全自动执行对应网页的标准化流程。家庭组功能同时可作为**批量快速登录验证工具**——已创建家庭组的账号会被秒级识别并跳过，方便快速确认账号登录状态。
@@ -22,7 +24,7 @@ Gemini Account Manager 是一款基于 Python 和 CustomTkinter 开发的开源 
 ## 📥 下载使用
 
 ### 方式一：直接下载（推荐普通用户）
-前往 [Releases](https://github.com/Kyle1st/Gemini-Account-Manager/releases) 页面，下载最新版本的 **`GeminiAccountManager_v1.1.0_Windows.zip`**。
+前往 [Releases](https://github.com/Kyle1st/Gemini-Account-Manager/releases) 页面，下载最新版本的 **`GeminiAccountManager_v1.2.0_Windows.zip`**。
 
 解压后双击 `GeminiAccountManager.exe` 即可运行，**无需安装 Python 环境**。
 

@@ -58,12 +58,44 @@ class AccountManager:
                 for key, value in fields.items():
                     if key == "tags":
                         acc["tags"] = value
+                    elif key in ("cookies", "cookie_updated_at"):
+                        acc[key] = value
                     elif key in acc and key not in ("id", "created_at"):
                         acc[key] = value
                 acc["updated_at"] = datetime.now().isoformat(timespec="seconds")
                 self.save()
                 return copy.deepcopy(acc)
         return None
+
+    def save_cookies(self, email: str, cookies: list[dict]) -> bool:
+        """Save cookies for an account identified by email."""
+        for acc in self.accounts:
+            if acc["email"] == email:
+                acc["cookies"] = cookies
+                acc["cookie_updated_at"] = datetime.now().isoformat(timespec="seconds")
+                self.save()
+                return True
+        return False
+
+    def get_cookies(self, email: str) -> list[dict] | None:
+        """Get saved cookies for an account. Returns None if no cookies."""
+        for acc in self.accounts:
+            if acc["email"] == email:
+                cookies = acc.get("cookies")
+                if cookies:
+                    return copy.deepcopy(cookies)
+                return None
+        return None
+
+    def clear_cookies(self, email: str) -> bool:
+        """Clear saved cookies for an account."""
+        for acc in self.accounts:
+            if acc["email"] == email:
+                acc.pop("cookies", None)
+                acc.pop("cookie_updated_at", None)
+                self.save()
+                return True
+        return False
 
     def delete_account(self, account_id: str) -> bool:
         for i, acc in enumerate(self.accounts):

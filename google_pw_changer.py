@@ -21,6 +21,7 @@ class GooglePasswordChanger:
     def __init__(self, headless: bool = False):
         self.headless = headless
         self._last_totp_time = 0  # track when last TOTP code was used
+        self._interrupt_manual_login = False
 
     def _create_page(self) -> ChromiumPage:
         """Create a new ChromiumPage with stealth settings."""
@@ -34,25 +35,273 @@ class GooglePasswordChanger:
         co.set_argument('--disable-popup-blocking')
         co.set_argument('--disable-infobars')
 
-        # ── Anti-detection for headless mode ──
+        # ── Anti-detection ──
         # Override default HeadlessChrome user-agent to look like a real browser
         co.set_argument(
             '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
             'AppleWebKit/537.36 (KHTML, like Gecko) '
             'Chrome/131.0.0.0 Safari/537.36'
         )
-        # Set a realistic window size (headless defaults to 800x600 or 0x0)
-        co.set_argument('--window-size=1920,1080')
-        # Hide automation indicators without triggering Chrome warning bars
+        # Disable automation indicators
+        co.set_argument('--disable-blink-features=AutomationControlled')
+        co.set_argument('--lang=en-US,en')
+
+        if self.headless:
+            # Headless: use a realistic fixed size
+            co.set_argument('--window-size=1920,1080')
+        else:
+            # Headed: center on screen at 3/4 size
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                screen_w = user32.GetSystemMetrics(0)
+                screen_h = user32.GetSystemMetrics(1)
+                win_w = screen_w * 3 // 4
+                win_h = screen_h * 3 // 4
+                pos_x = (screen_w - win_w) // 2
+                pos_y = (screen_h - win_h) // 2
+                co.set_argument(f'--window-size={win_w},{win_h}')
+                co.set_argument(f'--window-position={pos_x},{pos_y}')
+            except Exception:
+                co.set_argument('--window-size=1920,1080')
+
+        # Hide automation indicators
         co.set_pref('excludeSwitches', ['enable-automation'])
         co.set_pref('useAutomationExtension', False)
 
         page = ChromiumPage(addr_or_opts=co)
+
+        # Inject stealth JS immediately after page creation
+        try:
+            page.run_js("""
+                // Hide webdriver flag
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                // Fake plugins (headless has none)
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+                // Fake languages
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['en-US', 'en']
+                });
+                // Fake platform
+                Object.defineProperty(navigator, 'platform', {
+                    get: () => 'Win32'
+                });
+                // Override chrome runtime
+                window.chrome = { runtime: {} };
+                // Override permissions query
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                    Promise.resolve({ state: Notification.permission }) :
+                    originalQuery(parameters)
+                );
+            """)
+        except Exception:
+            pass
+
         return page
 
     def _random_sleep(self, min_s=0.3, max_s=0.8):
         """Random delay to mimic human pauses."""
         time.sleep(random.uniform(min_s, max_s))
+
+    def _try_cookie_login(self, page: "ChromiumPage", cookies: list[dict],
+                          email: str, _log: Callable) -> bool:
+        """Inject saved cookies and verify they are still valid.
+        Returns True if cookie login succeeded."""
+        try:
+            _log(f"[{email}] 尝试 Cookie 快速登录...")
+            # Navigate to Google domain first (cookies need matching domain)
+            page.get("https://accounts.google.com")
+            self._random_sleep(0.3, 0.5)
+
+            # Inject cookies
+            for cookie in cookies:
+                try:
+                    page.set.cookies(cookie)
+                except Exception:
+                    pass
+
+            # Navigate to myaccount to verify login status
+            page.get("https://myaccount.google.com")
+            self._random_sleep(1.0, 1.5)
+
+            current_url = page.url.lower()
+            if "signin" in current_url or "servicelogin" in current_url:
+                _log(f"[{email}] Cookie 已失效，将使用密码登录")
+                return False
+
+            _log(f"[{email}] ✓ Cookie 快速登录成功")
+            return True
+        except Exception as e:
+            _log(f"[{email}] Cookie 登录异常: {str(e)[:60]}，将使用密码登录")
+            return False
+
+    def _extract_cookies(self, page: "ChromiumPage") -> list[dict]:
+        """Extract all cookies from the current browser session."""
+        try:
+            raw_cookies = page.cookies()
+            # Convert to serializable list of dicts
+            cookie_list = []
+            for c in raw_cookies:
+                cookie_dict = {
+                    "name": c.get("name", ""),
+                    "value": c.get("value", ""),
+                    "domain": c.get("domain", ""),
+                    "path": c.get("path", "/"),
+                }
+                cookie_list.append(cookie_dict)
+            return cookie_list
+        except Exception:
+            return []
+
+    def manual_login_for_cookie(
+        self,
+        email: str,
+        password: str = "",
+        callback: Optional[Callable[[str], None]] = None,
+        timeout: int = 120,
+    ) -> dict:
+        """Open browser for manual login (for accounts without 2FA/TOTP).
+        Waits for user to complete login, then extracts cookies.
+        Returns: {"email": str, "success": bool, "message": str, "cookies": list}
+        """
+        self._interrupt_manual_login = False
+        def _log(msg: str):
+            if callback:
+                callback(msg)
+
+        result = {"email": email, "success": False, "message": "", "cookies": []}
+        page = None
+
+        try:
+            # Force non-headless for manual login
+            old_headless = self.headless
+            self.headless = False
+            page = self._create_page()
+            self.headless = old_headless
+
+            # Navigate to Google login page
+            _log(f"[{email}] 正在打开 Google 登录页面...")
+            page.get(
+                "https://accounts.google.com/signin/v2/identifier"
+                "?flowName=GlifWebSignIn&flowEntry=ServiceLogin"
+            )
+            self._random_sleep(0.5, 1.0)
+
+            # Auto-fill email if available
+            if email:
+                try:
+                    email_input = page.ele('css:input[type="email"]', timeout=5)
+                    if email_input:
+                        email_input.input(email)
+                        self._random_sleep(0.2, 0.4)
+                        page.ele('#identifierNext', timeout=3).click()
+                        _log(f"[{email}] 已自动填入邮箱，请在浏览器中完成登录")
+                except Exception:
+                    _log(f"[{email}] 请在浏览器中手动输入邮箱并完成登录")
+            else:
+                _log(f"[{'未知账号' if not email else email}] 请在浏览器中完成登录")
+
+            # Wait for user to complete login (poll URL)
+            _log(f"[{email or '未知账号'}] 等待登录完成（最多 {timeout} 秒）...")
+            start = time.time()
+            while time.time() - start < timeout:
+                try:
+                    current_url = page.url.lower()
+                    # User has left the signin pages
+                    if not any(x in current_url for x in [
+                        "accounts.google.com/signin",
+                        "accounts.google.com/v3/signin",
+                        "accounts.google.com/servicelogin",
+                        "accounts.google.com/speedbump",
+                        "challenge/",
+                    ]):
+                        break
+                except Exception:
+                    # If page.url fails, it likely means the browser has been closed by the user
+                    result["message"] = "浏览器已被关闭，登录中止"
+                    _log(f"[{email or '未知账号'}] ⚠ {result['message']}")
+                if self._interrupt_manual_login:
+                    result["message"] = "用户已手动中止登录"
+                    _log(f"[{email or '未知账号'}] 🛑 {result['message']}")
+                    return result
+                time.sleep(1.0)
+            else:
+                result["message"] = "登录超时，请重试"
+                _log(f"[{email or '未知账号'}] 登录超时")
+                return result
+
+            if self._interrupt_manual_login:
+                result["message"] = "用户已手动中止登录"
+                _log(f"[{email or '未知账号'}] 🛑 {result['message']}")
+                return result
+
+            self._random_sleep(1.0, 2.0)
+
+            # Dismiss prompts
+            self._dismiss_prompts(page, email, _log)
+
+            # Extract cookies
+            cookies = self._extract_cookies(page)
+            
+            # If email was not provided, try to extract it from the page
+            extracted_email = email
+            if not extracted_email and cookies:
+                _log(f"[{email or '未知账号'}] 尝试自动提取账号邮箱...")
+                try:
+                    # Navigate to a simple Google page where the account email is usually available
+                    page.get("https://myaccount.google.com/email")
+                    self._random_sleep(1.0, 2.0)
+                    
+                    # Try a few common selectors for the email
+                    email_el = page.ele('css:div[data-email]') or \
+                               page.ele('xpath://div[contains(text(), "@gmail.com")]') or \
+                               page.ele('xpath://div[contains(text(), "@")]')
+                    
+                    if email_el:
+                        import re
+                        text = email_el.text or email_el.attr('data-email') or ""
+                        match = re.search(r'[\w\.-]+@[\w\.-]+', text)
+                        if match:
+                            extracted_email = match.group(0)
+                            _log(f"[未知账号] 成功提取到邮箱: {extracted_email}")
+                except Exception as e:
+                    _log(f"[{email or '未知账号'}] 自动提取邮箱失败: {str(e)[:50]}")
+            
+            if not extracted_email and cookies:
+                _log(f"[{email or '未知账号'}] 注意: 未能提取到邮箱，此 Cookie 可能无法正确绑定")
+
+            # Update the result dictionary with the new email
+            result["email"] = extracted_email
+
+            if cookies:
+                result["success"] = True
+                result["cookies"] = cookies
+                result["message"] = f"登录成功，Cookie 已提取 ({extracted_email or '未知邮箱'})"
+                _log(f"[{extracted_email or '未知账号'}] ✅ 登录成功，已提取 {len(cookies)} 条 Cookie")
+            else:
+                result["message"] = "登录成功但 Cookie 提取失败"
+                _log(f"[{extracted_email or '未知账号'}] ⚠ Cookie 提取失败")
+
+        except Exception as e:
+            result["message"] = f"操作失败: {str(e)[:200]}"
+            _log(f"[{result.get('email', email) or '未知账号'}] 失败: {result['message']}")
+
+        finally:
+            if page:
+                try:
+                    page.quit()
+                except Exception:
+                    pass
+
+        return result
+
+    def cancel_manual_login(self):
+        """Called by the UI to interrupt an ongoing manual login."""
+        self._interrupt_manual_login = True
 
     def _wait_until_gone(self, page, selector: str, timeout: float = 10.0):
         """Wait until an element matching `selector` is no longer displayed.
@@ -75,16 +324,17 @@ class GooglePasswordChanger:
         new_password: str,
         totp_secret: str,
         callback: Optional[Callable[[str], None]] = None,
+        cookies: list[dict] | None = None,
     ) -> dict:
         """
         Change a single Google account's password.
-        Returns: {"email": str, "success": bool, "message": str}
+        Returns: {"email": str, "success": bool, "message": str, "cookies": list}
         """
         def _log(msg: str):
             if callback:
                 callback(msg)
 
-        result = {"email": email, "success": False, "message": ""}
+        result = {"email": email, "success": False, "message": "", "cookies": []}
         page = None
 
         try:
@@ -92,7 +342,9 @@ class GooglePasswordChanger:
 
             # Step 1-4: Login
             _log(f"[{email}] 正在登录 Google...")
-            self._login(page, email, current_password, totp_secret, _log)
+            new_cookies = self._login(page, email, current_password, totp_secret, _log, cookies=cookies)
+            if new_cookies:
+                result["cookies"] = new_cookies
 
             # Step 5: Navigate to password change page
             _log(f"[{email}] 正在跳转到密码修改页面...")
@@ -333,17 +585,41 @@ class GooglePasswordChanger:
 
     def _verify_success(self, page: ChromiumPage) -> bool:
         """Check if the password change was successful."""
-        for text in ["Password changed", "密码已更改", "Password updated", "密码已更新"]:
+        # Wait a moment for the page to update after submission
+        time.sleep(1.5)
+        
+        # Check 1: Look for success text
+        for i, text in enumerate(["Password changed", "密码已更改",
+                                   "Password updated", "密码已更新",
+                                   "Password saved", "密码已保存"]):
             try:
-                el = page.ele(f'text:{text}', timeout=0.5)
+                # Give the first check more time
+                timeout = 2.0 if i == 0 else 0.5
+                el = page.ele(f'text:{text}', timeout=timeout)
                 if el:
                     return True
             except Exception:
                 continue
 
-        # If redirected away from password page, likely success
-        if "signinoptions/password" not in page.url:
+        # Check 2: If redirected away from password page, likely success
+        current_url = page.url.lower()
+        if "signinoptions/password" not in current_url:
             return True
+        
+        # Check 3: Wait a bit more and check again (page might be slow)
+        time.sleep(2.0)
+        current_url = page.url.lower()
+        if "signinoptions/password" not in current_url:
+            return True
+        
+        # Check 4: Look for any success indicators on the page
+        for text in ["Your password has been changed", "Password changed",
+                      "密码已更改", "密码已更新"]:
+            try:
+                if page.ele(f'text:{text}', timeout=0.5):
+                    return True
+            except Exception:
+                continue
 
         return False
 
@@ -400,19 +676,20 @@ class GooglePasswordChanger:
         current_password: str,
         totp_secret: str,
         callback: Optional[Callable[[str], None]] = None,
+        cookies: list[dict] | None = None,
     ) -> dict:
         """
         Reset the TOTP authenticator for a Google account.
         Navigates to 2-step verification settings, changes the authenticator,
         extracts the new secret key, and confirms with a verification code.
 
-        Returns: {"email": str, "success": bool, "message": str, "new_totp_secret": str}
+        Returns: {"email": str, "success": bool, "message": str, "new_totp_secret": str, "cookies": list}
         """
         def _log(msg: str):
             if callback:
                 callback(msg)
 
-        result = {"email": email, "success": False, "message": "", "new_totp_secret": ""}
+        result = {"email": email, "success": False, "message": "", "new_totp_secret": "", "cookies": []}
         page = None
 
         try:
@@ -420,7 +697,9 @@ class GooglePasswordChanger:
 
             # Step 1: Login
             _log(f"[{email}] 正在登录 Google...")
-            self._login(page, email, current_password, totp_secret, _log)
+            new_cookies = self._login(page, email, current_password, totp_secret, _log, cookies=cookies)
+            if new_cookies:
+                result["cookies"] = new_cookies
 
             # Step 2: Navigate to 2-step verification page
             _log(f"[{email}] 正在打开两步验证设置...")
@@ -476,16 +755,22 @@ class GooglePasswordChanger:
         return result
 
     def _login(self, page: ChromiumPage, email: str, password: str,
-               totp_secret: str, _log: Callable):
-        """Full login flow: email -> password -> 2FA -> dismiss prompts.
-        Retries up to 3 times if login fails."""
-        
+               totp_secret: str, _log: Callable, cookies: list[dict] | None = None):
+        """Full login flow: cookie (if available) -> email -> password -> 2FA -> dismiss prompts.
+        Retries up to 3 times if login fails.
+        Returns extracted cookies on success (list[dict]) or empty list."""
+
+        # Try cookie login first
+        if cookies:
+            if self._try_cookie_login(page, cookies, email, _log):
+                return self._extract_cookies(page)
+
         max_attempts = 3
         
         for attempt in range(1, max_attempts + 1):
             if attempt > 1:
                 _log(f"[{email}] 🔄 第 {attempt} 次登录尝试...")
-                self._random_sleep(2.0, 3.0)
+                self._random_sleep(1.0, 1.5)
             
             page.get(
                 "https://accounts.google.com/signin/v2/identifier"
@@ -501,22 +786,53 @@ class GooglePasswordChanger:
             self._random_sleep(0.3, 0.6)
 
             try:
-                email_input = page.ele('css:input[type="email"]', timeout=self.TIMEOUT)
+                LOGIN_TIMEOUT = 8  # Faster timeout for login steps
+                email_input = page.ele('css:input[type="email"]', timeout=LOGIN_TIMEOUT)
                 email_input.input(email)
                 self._random_sleep(0.1, 0.2)
-                page.ele('#identifierNext', timeout=self.TIMEOUT).click()
+                page.ele('#identifierNext', timeout=LOGIN_TIMEOUT).click()
 
                 # Smart wait: wait for email input to disappear (page transition)
-                self._wait_until_gone(page, 'css:input[type="email"]', timeout=self.TIMEOUT)
+                self._wait_until_gone(page, 'css:input[type="email"]', timeout=LOGIN_TIMEOUT)
 
                 _log(f"[{email}] 正在输入密码...")
-                pw_input = page.ele('css:input[type="password"]', timeout=self.TIMEOUT)
+                pw_input = page.ele('css:input[type="password"]', timeout=LOGIN_TIMEOUT)
                 pw_input.input(password)
-                self._random_sleep(0.1, 0.2)
-                page.ele('#passwordNext', timeout=self.TIMEOUT).click()
+                self._random_sleep(0.3, 0.5)
+
+                # Click password submit — try multiple selectors for headless compatibility
+                pw_next_clicked = False
+                for selector in ['#passwordNext', 'css:button[type="submit"]',
+                                 'text:Next', 'text:下一步',
+                                 'xpath://button[contains(., "Next")]',
+                                 'xpath://div[@id="passwordNext"]']:
+                    try:
+                        btn = page.ele(selector, timeout=2)
+                        if btn:
+                            btn.click()
+                            pw_next_clicked = True
+                            break
+                    except Exception:
+                        continue
+                
+                if not pw_next_clicked:
+                    # JS fallback: click any visible submit-like button
+                    page.run_js("""
+                        var btn = document.querySelector('#passwordNext')
+                            || document.querySelector('button[type="submit"]');
+                        if (btn) btn.click();
+                        else {
+                            var els = document.querySelectorAll('button, div[role="button"]');
+                            for (var e of els) {
+                                if (e.textContent.includes('Next') || e.textContent.includes('下一步')) {
+                                    e.click(); break;
+                                }
+                            }
+                        }
+                    """)
 
                 # Smart wait: wait for password input to disappear (page transition)
-                self._wait_until_gone(page, '#passwordNext', timeout=self.TIMEOUT)
+                self._wait_until_gone(page, '#passwordNext', timeout=LOGIN_TIMEOUT)
                 self._random_sleep(0.3, 0.6)
 
                 self._handle_2fa(page, totp_secret, email, _log)
@@ -565,7 +881,9 @@ class GooglePasswordChanger:
             
             # If we get here, login succeeded
             _log(f"[{email}] ✓ 登录成功")
-            return
+            # Extract cookies after successful login
+            new_cookies = self._extract_cookies(page)
+            return new_cookies
 
     def _dismiss_prompts(self, page: ChromiumPage, email: str, _log: Callable):
         """Dismiss post-login prompts like passkey, faster login, recovery, etc.
@@ -921,17 +1239,18 @@ class GooglePasswordChanger:
         callback: Optional[Callable[[str], None]] = None,
         share_google_one: bool = False,
         keep_browser_open: bool = False,
+        cookies: list[dict] | None = None,
     ) -> dict:
         """
         Create a new Google Family Group for the account.
         
-        Returns: {"email": str, "success": bool, "message": str}
+        Returns: {"email": str, "success": bool, "message": str, "cookies": list}
         """
         def _log(msg: str):
             if callback:
                 callback(msg)
 
-        result = {"email": email, "success": False, "message": ""}
+        result = {"email": email, "success": False, "message": "", "cookies": []}
         page = None
 
         try:
@@ -939,7 +1258,9 @@ class GooglePasswordChanger:
 
             # Step 1: Login
             _log(f"[{email}] 正在登录 Google...")
-            self._login(page, email, password, totp_secret, _log)
+            new_cookies = self._login(page, email, password, totp_secret, _log, cookies=cookies)
+            if new_cookies:
+                result["cookies"] = new_cookies
 
             # Step 2: Navigate to Family creation page
             _log(f"[{email}] 正在打开家庭组创建页面...")
@@ -1227,29 +1548,74 @@ class GooglePasswordChanger:
             # 2. Click 'Manage membership'
             _log(f"[{email}] 进入会员管理...")
             clicked_manage = False
+            
+            # Scroll down to find the button
+            for _ in range(3):
+                page.run_js("window.scrollBy(0, 400);")
+                self._random_sleep(0.4, 0.6)
+            
             for text in ["Manage membership", "管理会员资格"]:
                 try:
                     btn = page.ele(f'text:{text}', timeout=3)
-                    if btn:
+                    if btn and btn.states.is_displayed:
+                        btn.scroll.to_see()
+                        self._random_sleep(0.3, 0.5)
                         btn.click()
                         clicked_manage = True
                         self._random_sleep(1.5, 2.5)
+                        _log(f"[{email}] 点击了'{text}'")
                         break
                 except:
                     pass
             
+            # Fallback: try <a> tags or buttons with partial match
+            if not clicked_manage:
+                for text in ["Manage membership", "管理会员资格"]:
+                    try:
+                        btn = page.ele(f'xpath://a[contains(., "{text}")] | //button[contains(., "{text}")]', timeout=1)
+                        if btn and btn.states.is_displayed:
+                            btn.scroll.to_see()
+                            self._random_sleep(0.3, 0.5)
+                            btn.click()
+                            clicked_manage = True
+                            self._random_sleep(1.5, 2.5)
+                            _log(f"[{email}] 通过 xpath 点击了'{text}'")
+                            break
+                    except:
+                        pass
+            
+            # Last resort: navigate directly
+            if not clicked_manage:
+                _log(f"[{email}] 未找到 Manage membership 按钮，尝试直接导航...")
+                page.get("https://one.google.com/about/plans")
+                self._random_sleep(2.0, 3.0)
+            
             # 3. Expand 'Manage family settings'
+            # Scroll to bottom first to ensure the section is visible
+            _log(f"[{email}] 滚动到页面底部查找家庭设置...")
+            for _ in range(3):
+                page.run_js("window.scrollBy(0, 500);")
+                self._random_sleep(0.5, 0.8)
+            
             expanded = False
             for text in ["Manage family settings", "管理家庭设置"]:
                 try:
                     el = page.ele(f'text:{text}', timeout=3)
                     if el:
+                        el.scroll.to_see()
+                        self._random_sleep(0.3, 0.5)
                         el.click()
                         expanded = True
-                        self._random_sleep(1.0, 1.5)
+                        self._random_sleep(1.5, 2.0)
+                        _log(f"[{email}] 已展开'{text}'")
                         break
                 except:
                     pass
+            
+            if expanded:
+                # Scroll down a bit more to reveal the toggle
+                page.run_js("window.scrollBy(0, 300);")
+                self._random_sleep(0.8, 1.0)
             
             # 4. Toggle 'Share Google One with family' — BUT check state first!
             _log(f"[{email}] 检查共享开关状态...")
@@ -1445,58 +1811,155 @@ class GooglePasswordChanger:
                 return result
 
             _log(f"[{email}] 已进入支付设置页...")
+            _log(f"[{email}] 当前页面 URL: {page.url}")
 
-            # Step 2: Click "Payment subscriptions" (left sidebar or top nav)
-            # Then navigate: Payment methods → Manage payment methods
-            # Then: Settings tab → (scroll down) → Payment profile status → Close payments profile
-
-            # Navigate directly to the payments center
-            _log(f"[{email}] 正在导航到支付中心并查找'设置'...")
-            page.get("https://payments.google.com/gp/w/home/paymentmethods")
-            self._random_sleep(2.0, 2.5)
-
-            # Step 3: Click "Settings" tab
+            # Step 2: Make sure we're on the Settings tab
+            # We already navigated to /settings, so just try clicking it in case a redirect happened
             for text in ["Settings", "设置"]:
                 try:
-                    b = page.ele(f'text:{text}', timeout=2)
+                    b = page.ele(f'text:{text}', timeout=1)
                     if b and b.states.is_displayed:
                         b.click()
-                        self._random_sleep(1.5, 2.0)
+                        self._random_sleep(1.0, 1.5)
                         _log(f"[{email}] 点击了 Settings 标签")
                         break
                 except Exception:
                     continue
 
-            # Step 4: Find and click "Close payments profile" (link at bottom)
+            # Step 3: Find and click "Close payments profile" link
+            # First scroll to bottom to ensure lazy-loaded content appears
             _log(f"[{email}] 滚动寻找'关闭支付资料'链接...")
-            page.run_js("window.scrollTo(0, document.body.scrollHeight);")
-            self._random_sleep(1.0, 1.5)
-
-            close_link_clicked = False
-            for attempt in range(3):
-                page.run_js("window.scrollTo(0, document.body.scrollHeight);")
+            for _ in range(3):
+                page.run_js("window.scrollBy(0, 500);")
                 self._random_sleep(0.5, 0.8)
-                
-                # Try clicking the link/button
-                for text in ["Close payments profile", "关闭支付资料", "Close profile"]:
+            
+            close_link_clicked = False
+            close_keywords = [
+                "Close payments profile",
+                "关闭支付资料",
+                "Close profile",
+                "Close payment profile",
+            ]
+            
+            for attempt in range(5):
+                # Priority 1: Find <a> tags (the actual clickable links)
+                for keyword in close_keywords:
                     try:
-                        b = page.ele(f'text:{text}', timeout=1.5)
+                        b = page.ele(f'xpath://a[contains(., "{keyword}")]', timeout=1)
                         if b and b.states.is_displayed:
-                            # Verify this is the initial link, not the final button (which usually has 'action' role or distinct class)
-                            # But usually unique text is enough.
+                            b.scroll.to_see()
+                            self._random_sleep(0.3, 0.5)
                             b.click()
                             self._random_sleep(1.0, 1.5)
                             close_link_clicked = True
-                            _log(f"[{email}] 点击了'{text}'链接")
+                            _log(f"[{email}] 点击了'{keyword}'链接 (<a>标签)")
                             break
                     except Exception:
-                        continue
+                        pass
+                
                 if close_link_clicked:
                     break
+                
+                # Priority 2: Find <button> or elements with role="link"/"button"
+                for keyword in close_keywords:
+                    try:
+                        b = page.ele(f'xpath://button[contains(., "{keyword}")] | //*[@role="link"][contains(., "{keyword}")] | //*[@role="button"][contains(., "{keyword}")]', timeout=0.5)
+                        if b and b.states.is_displayed:
+                            b.scroll.to_see()
+                            self._random_sleep(0.3, 0.5)
+                            b.click()
+                            self._random_sleep(1.0, 1.5)
+                            close_link_clicked = True
+                            _log(f"[{email}] 点击了'{keyword}'链接 (button/role)")
+                            break
+                    except Exception:
+                        pass
+                
+                if close_link_clicked:
+                    break
+                
+                # Scroll down more to reveal content
+                page.run_js(f"window.scrollBy(0, {400 + attempt * 200});")
+                self._random_sleep(0.8, 1.0)
             
             if not close_link_clicked:
+                # Last resort: JS — click the smallest (most specific) element matching
+                try:
+                    clicked = page.run_js("""
+                        const keywords = ['Close payments profile', '关闭支付资料', 'Close profile'];
+                        // First try <a> tags only
+                        for (const kw of keywords) {
+                            const links = document.querySelectorAll('a');
+                            for (const el of links) {
+                                if (el.textContent.trim().includes(kw) && el.offsetParent !== null) {
+                                    el.scrollIntoView({block: 'center'});
+                                    el.click();
+                                    return 'a:' + kw;
+                                }
+                            }
+                        }
+                        // Then try buttons
+                        for (const kw of keywords) {
+                            const btns = document.querySelectorAll('button, [role="link"], [role="button"]');
+                            for (const el of btns) {
+                                if (el.textContent.trim().includes(kw) && el.offsetParent !== null) {
+                                    el.scrollIntoView({block: 'center'});
+                                    el.click();
+                                    return 'btn:' + kw;
+                                }
+                            }
+                        }
+                        return false;
+                    """)
+                    if clicked:
+                        close_link_clicked = True
+                        self._random_sleep(1.0, 1.5)
+                        _log(f"[{email}] 通过 JS 点击了关闭链接: {clicked}")
+                except Exception:
+                    pass
+            
+            if not close_link_clicked:
+                _log(f"[{email}] 当前页面 URL: {page.url}")
                 result["message"] = "未找到'关闭支付资料'链接"
                 return result
+            
+            # Verify the click triggered something (dialog/modal should appear)
+            self._random_sleep(1.0, 1.5)
+            dialog_appeared = False
+            try:
+                # Check if a modal/dialog appeared
+                dialog_appeared = bool(
+                    page.ele('text:Verify it\'s you', timeout=2) or
+                    page.ele('text:验证您的身份', timeout=0.5) or
+                    page.ele('text:Closing your payments profile', timeout=0.5) or
+                    page.ele('text:select a reason', timeout=0.5) or
+                    page.ele('text:要关闭此付款资料', timeout=0.5)
+                )
+            except Exception:
+                pass
+            
+            if not dialog_appeared:
+                # The first click might have hit a label — try JS to find the real link
+                _log(f"[{email}] 第一次点击未触发对话框，尝试JS精确查找...")
+                try:
+                    clicked2 = page.run_js("""
+                        const links = document.querySelectorAll('a');
+                        for (const el of links) {
+                            const t = el.textContent.trim();
+                            if ((t.includes('Close payments profile') || t.includes('关闭支付资料'))
+                                && el.offsetParent !== null) {
+                                el.scrollIntoView({block: 'center'});
+                                el.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    """)
+                    if clicked2:
+                        self._random_sleep(1.5, 2.0)
+                        _log(f"[{email}] JS 第二次点击完成")
+                except Exception:
+                    pass
 
             # Step 5: Handle "Verify it's you" -> "Next" -> Popup Window
             _log(f"[{email}] 检查验证对话框...")
@@ -1689,6 +2152,7 @@ class GooglePasswordChanger:
         totp_secret: str,
         callback: Optional[Callable[[str], None]] = None,
         keep_browser_open: bool = False,
+        cookies: list[dict] | None = None,
     ) -> dict:
         """
         Standalone flow: Login -> Close Payments Profile.
@@ -1697,15 +2161,20 @@ class GooglePasswordChanger:
             if callback:
                 callback(msg)
 
-        result = {"email": email, "success": False, "message": ""}
+        result = {"email": email, "success": False, "message": "", "cookies": []}
         page = None
 
         try:
             page = self._create_page()
             
-            # 1. Login
+            # 1. Login (Force password login to avoid 2FA loop on payments page)
             _log(f"[{email}] 正在登录 Google...")
-            self._login(page, email, password, totp_secret, _log)
+            # We purposely do NOT pass cookies=cookies here because Close Payments
+            # strictly requires re-authentication, and cookie fast-login puts us 
+            # in a state that loops or fails the TOTP challenge on the payments page.
+            new_cookies = self._login(page, email, password, totp_secret, _log)
+            if new_cookies:
+                result["cookies"] = new_cookies
             
             # 2. Close Payments
             _log(f"[{email}] 开始关闭支付资料流程...")
@@ -1735,16 +2204,17 @@ class GooglePasswordChanger:
         totp_secret: str,
         callback: Optional[Callable[[str], None]] = None,
         keep_browser_open: bool = False,
+        cookies: list[dict] | None = None,
     ) -> dict:
         """
         Standalone flow: Login -> Navigate to gemini.google.com.
-        Returns: {"email": str, "success": bool, "message": str}
+        Returns: {"email": str, "success": bool, "message": str, "cookies": list}
         """
         def _log(msg: str):
             if callback:
                 callback(msg)
 
-        result = {"email": email, "success": False, "message": ""}
+        result = {"email": email, "success": False, "message": "", "cookies": []}
         page = None
 
         try:
@@ -1752,7 +2222,9 @@ class GooglePasswordChanger:
 
             # 1. Login
             _log(f"[{email}] 正在登录 Google...")
-            self._login(page, email, password, totp_secret, _log)
+            new_cookies = self._login(page, email, password, totp_secret, _log, cookies=cookies)
+            if new_cookies:
+                result["cookies"] = new_cookies
 
             # 2. Navigate to Gemini
             _log(f"[{email}] 正在跳转到 Gemini...")
@@ -1795,6 +2267,7 @@ class GooglePasswordChanger:
         totp_secret: str,
         callback: Optional[Callable[[str], None]] = None,
         keep_browser_open: bool = False,
+        cookies: list[dict] | None = None,
     ) -> dict:
         """
         Standalone flow: Login -> Navigate to AI Student promo -> Check Eligibility.
@@ -1803,7 +2276,7 @@ class GooglePasswordChanger:
             if callback:
                 callback(msg)
 
-        result = {"email": email, "success": False, "message": ""}
+        result = {"email": email, "success": False, "message": "", "cookies": []}
         page = None
 
         try:
@@ -1812,7 +2285,9 @@ class GooglePasswordChanger:
             # 1. Login
             _log(f"[{email}] 正在登录 Google...")
             try:
-                self._login(page, email, password, totp_secret, _log)
+                new_cookies = self._login(page, email, password, totp_secret, _log, cookies=cookies)
+                if new_cookies:
+                    result["cookies"] = new_cookies
             except RuntimeError as e:
                 err = str(e)
                 if "密码" in err or "assword" in err or "disabled" in err or "停用" in err:

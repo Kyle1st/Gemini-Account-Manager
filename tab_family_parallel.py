@@ -222,6 +222,7 @@ class FamilyParallelTab:
                 callback=step_cb,
                 share_google_one=share_google_one,
                 keep_browser_open=keep_browser_open,
+                cookies=acc.get("cookies"),
             )
 
         futures: dict = {}
@@ -254,6 +255,10 @@ class FamilyParallelTab:
                         }
 
                     results[idx] = result
+
+                    # Save cookies if returned
+                    if result.get("cookies"):
+                        self._queue.put(("save_cookies", acc["email"], result["cookies"]))
 
                     self._queue.put(
                         (
@@ -304,6 +309,10 @@ class FamilyParallelTab:
                         f"进度 {self._completed_count}/{self._total_count} | {email}: {short}"
                     )
                     self.log_callback(f"[创建家庭组 {idx+1}/{total}] {email}: {short} {detail}")
+
+                elif kind == "save_cookies":
+                    _, email, cookies = msg
+                    self.account_manager.save_cookies(email, cookies)
 
                 elif kind == "done":
                     self._on_finished(msg[1])

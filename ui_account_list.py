@@ -67,6 +67,10 @@ class AccountListPanel(ctk.CTkFrame):
         ctk.CTkButton(btn_frame, text="批量删除", width=80, height=30,
                       fg_color="#e67e22", hover_color="#d35400",
                       command=self._on_batch_delete).pack(side="left")
+        ctk.CTkButton(btn_frame, text="🔄", width=36, height=30,
+                      fg_color=("gray75", "gray30"), hover_color=("gray65", "gray40"),
+                      font=ctk.CTkFont(size=14),
+                      command=lambda: self.refresh_list(self.search_var.get())).pack(side="right")
 
         self.refresh_list()
 
@@ -153,6 +157,15 @@ class AccountListPanel(ctk.CTkFrame):
             self._item_buttons.append(row)  # store row frame for cleanup
             self._account_ids.append(acc_id)
 
+            # Cookie indicator
+            if acc.get("cookies"):
+                ctk.CTkButton(
+                    row, text="🍪", width=28, height=28,
+                    font=ctk.CTkFont(size=12), corner_radius=4,
+                    fg_color="#e67e22", hover_color="#d35400",
+                    state="disabled",
+                ).pack(side="left", padx=1)
+
         # Restore multi-selection logic
         for idx, aid in enumerate(self._account_ids):
             if aid in prev_selected_ids:
@@ -226,20 +239,20 @@ class AccountListPanel(ctk.CTkFrame):
                 self._selected_indices.add(idx)
             self._last_clicked_idx = idx
         else:
-            self._selected_indices = {idx}
-            self._last_clicked_idx = idx
+            if self._selected_indices == {idx}:
+                self._selected_indices.clear()
+                self._last_clicked_idx = -1
+            else:
+                self._selected_indices = {idx}
+                self._last_clicked_idx = idx
 
         self._update_highlighting()
         
-        # Load the newly clicked account to detail panel if it's selected
-        if idx in self._selected_indices:
-            self.on_select_callback(self._account_ids[idx])
+        if not self._selected_indices:
+            self.on_select_callback(None) # Clear form
         else:
-            if not self._selected_indices:
-                self.on_new_callback()
-            else:
-                last_idx = list(self._selected_indices)[-1]
-                self.on_select_callback(self._account_ids[last_idx])
+            last_idx = list(self._selected_indices)[-1]
+            self.on_select_callback(self._account_ids[last_idx])
 
     def _on_add(self):
         self._selected_indices.clear()

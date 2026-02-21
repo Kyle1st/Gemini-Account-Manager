@@ -215,6 +215,8 @@ class TotpParallelTab:
             )
 
             changer = GooglePasswordChanger(headless=headless)
+            # Force password+TOTP login (no cookies) — changing 2FA
+            # requires full re-authentication.
             return changer.reset_totp(
                 email=acc["email"],
                 current_password=acc["password"],
@@ -259,6 +261,10 @@ class TotpParallelTab:
                             ("update_local", acc["email"], result["new_totp_secret"])
                         )
 
+                    # Save cookies if returned
+                    if result.get("cookies"):
+                        self._queue.put(("save_cookies", acc["email"], result["cookies"]))
+
                     self._queue.put(
                         (
                             "item_done",
@@ -297,8 +303,8 @@ class TotpParallelTab:
 
                 if kind == "progress":
                     _, idx, total, email, status = msg
-                    self.progress_var.set(f"[{idx+1}/{total}] {email}: {status}")
-                    self.status_callback(f"并发改2FA进度: {self._completed_count}/{self._total_count}")
+                    self.progress_var.set(f"并发改2FA进度: {self._completed_count}/{self._total_count}")
+                    self.status_callback(f"[{idx+1}/{total}] {email}: {status}")
                     self.log_callback(f"[并发改2FA {idx+1}/{total}] {status}")
 
                 elif kind == "item_done":
@@ -316,6 +322,10 @@ class TotpParallelTab:
                         if acc["email"] == email:
                             self.account_manager.update_account(acc["id"], totp_secret=new_secret)
                             break
+
+                elif kind == "save_cookies":
+                    _, email, cookies = msg
+                    self.account_manager.save_cookies(email, cookies)
 
                 elif kind == "done":
                     self._on_finished(msg[1])

@@ -38,7 +38,7 @@ class PwChangeParallelTab:
 
         # 1. Configuration Card
         config_card = ctk.CTkFrame(right, fg_color=("gray95", "gray20"), corner_radius=10)
-        config_card.pack(fill="x", pady=(0, 12))
+        config_card.pack(fill="x", pady=(0, 6))
 
         ctk.CTkLabel(config_card, text="⚙️ 参数配置", 
                      font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold")).pack(anchor="w", padx=18, pady=(12, 8))
@@ -68,13 +68,13 @@ class PwChangeParallelTab:
 
         # 1.5 Local Password Editor Card
         local_card = ctk.CTkFrame(right, fg_color=("gray95", "gray20"), corner_radius=10)
-        local_card.pack(fill="x", pady=(0, 12))
+        local_card.pack(fill="x", pady=(0, 6))
 
         ctk.CTkLabel(local_card, text="📝 本地密码编辑", 
-                     font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold")).pack(anchor="w", padx=18, pady=(12, 8))
+                     font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold")).pack(anchor="w", padx=16, pady=(8, 4))
 
         local_opt1 = ctk.CTkFrame(local_card, fg_color="transparent")
-        local_opt1.pack(fill="x", padx=18, pady=(0, 8))
+        local_opt1.pack(fill="x", padx=16, pady=(0, 4))
 
         ctk.CTkLabel(local_opt1, text="密码长度:", font=ctk.CTkFont(size=13)).pack(side="left")
         self.pw_len_var = ctk.IntVar(value=16)
@@ -89,7 +89,7 @@ class PwChangeParallelTab:
                       command=self._on_batch_pwchange).pack(side="left", padx=(15, 0))
 
         local_opt2 = ctk.CTkFrame(local_card, fg_color="transparent")
-        local_opt2.pack(fill="x", padx=18, pady=(0, 16))
+        local_opt2.pack(fill="x", padx=16, pady=(0, 8))
 
         ctk.CTkLabel(local_opt2, text="自定义密码:", font=ctk.CTkFont(size=13)).pack(side="left")
         self.custom_pw_var = ctk.StringVar()
@@ -102,20 +102,20 @@ class PwChangeParallelTab:
 
         # 2. Action Card
         action_card = ctk.CTkFrame(right, fg_color=("gray95", "gray20"), corner_radius=10)
-        action_card.pack(fill="x", pady=(0, 12))
+        action_card.pack(fill="x", pady=(0, 6))
 
         ctk.CTkLabel(action_card, text="🚀 操作控制", 
-                     font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold")).pack(anchor="w", padx=18, pady=(12, 8))
+                     font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold")).pack(anchor="w", padx=16, pady=(8, 4))
         
         # Helper text inside card
         ctk.CTkLabel(
             action_card,
             text="ℹ️ 提示：请先在主“批量改密”Tab中生成新密码，并加载到此处",
             font=ctk.CTkFont(size=12), text_color=("gray50", "gray70")
-        ).pack(anchor="w", padx=18, pady=(0, 8))
+        ).pack(anchor="w", padx=16, pady=(0, 4))
 
         btn_frame = ctk.CTkFrame(action_card, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=18, pady=(0, 18))
+        btn_frame.pack(fill="x", padx=16, pady=(0, 10))
 
         self.real_btn = ctk.CTkButton(
             btn_frame, text="▶ 执行并发改密", width=160, height=42,
@@ -287,7 +287,8 @@ class PwChangeParallelTab:
                 "email": email,
                 "password": existing["password"], # Old password for login
                 "new_password": new_data["password"], # New password to set
-                "totp_secret": existing.get("totp_secret", "") or new_data.get("totp_secret", "")
+                "totp_secret": existing.get("totp_secret", "") or new_data.get("totp_secret", ""),
+                "cookies": existing.get("cookies"),
             })
 
         if not tasks:
@@ -351,6 +352,8 @@ class PwChangeParallelTab:
             )
 
             changer = GooglePasswordChanger(headless=headless)
+            # Force password+TOTP login (no cookies) — changing password
+            # requires full re-authentication.
             return changer.change_password(
                 email=task["email"],
                 current_password=task["password"],
@@ -395,6 +398,10 @@ class PwChangeParallelTab:
                             ("update_local", task["email"], task["new_password"])
                         )
 
+                    # Save cookies if returned
+                    if result.get("cookies"):
+                        self._queue.put(("save_cookies", task["email"], result["cookies"]))
+
                     self._queue.put(
                         (
                             "item_done",
@@ -432,8 +439,8 @@ class PwChangeParallelTab:
 
                 if kind == "progress":
                     _, idx, total, email, status = msg
-                    self.progress_var.set(f"[{idx+1}/{total}] {email}: {status}")
-                    self.status_callback(f"并发改密进度: {self._completed_count}/{self._total_count}")
+                    self.progress_var.set(f"并发改密进度: {self._completed_count}/{self._total_count}")
+                    self.status_callback(f"[{idx+1}/{total}] {email}: {status}")
                     self.log_callback(f"[并发改密 {idx+1}/{total}] {status}")
 
                 elif kind == "item_done":
@@ -451,6 +458,10 @@ class PwChangeParallelTab:
                         if acc["email"] == email:
                             self.account_manager.update_account(acc["id"], password=new_password)
                             break
+
+                elif kind == "save_cookies":
+                    _, email, cookies = msg
+                    self.account_manager.save_cookies(email, cookies)
 
                 elif kind == "done":
                     self._on_finished(msg[1])

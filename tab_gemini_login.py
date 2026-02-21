@@ -211,6 +211,7 @@ class GeminiLoginTab:
                 totp_secret=acc.get("totp_secret", ""),
                 callback=step_cb,
                 keep_browser_open=keep_browser_open,
+                cookies=acc.get("cookies"),
             )
 
         futures: dict = {}
@@ -243,6 +244,10 @@ class GeminiLoginTab:
                         }
 
                     results[idx] = result
+
+                    # Save cookies if returned
+                    if result.get("cookies"):
+                        self._queue.put(("save_cookies", acc["email"], result["cookies"]))
 
                     self._queue.put(
                         (
@@ -294,6 +299,10 @@ class GeminiLoginTab:
                     )
                     self.log_callback(f"[Gemini 登录 {idx+1}/{total}] {email}: {short} {detail}")
 
+                elif kind == "save_cookies":
+                    _, email, cookies = msg
+                    self.account_manager.save_cookies(email, cookies)
+
                 elif kind == "done":
                     self._on_finished(msg[1])
                     return
@@ -322,6 +331,7 @@ class GeminiLoginTab:
         self.textbox.insert("1.0", summary)
 
         self.progress_var.set(f"完成! 成功 {success}, 失败 {failed}")
+        self.on_data_changed()
         messagebox.showinfo("多并发登录 Gemini 完成", f"成功: {success}\n失败: {failed}\n\n{summary[:500]}...")
 
     def _on_stop(self):

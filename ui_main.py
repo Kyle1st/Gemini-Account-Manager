@@ -21,7 +21,7 @@ class MainApplication(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Gemini Account Manager")
-        self.geometry("1100x720")
+        self.geometry("1100x820")
         self.minsize(960, 600)
 
         # Set window icon
@@ -66,7 +66,7 @@ class MainApplication(ctk.CTk):
         ctk.CTkLabel(title_frame, text="Gemini Account Manager",
                      font=ctk.CTkFont(family="Segoe UI", size=22, weight="bold"),
                      text_color=("gray15", "gray95")).pack(anchor="w")
-        ctk.CTkLabel(title_frame, text="v1.1.0",
+        ctk.CTkLabel(title_frame, text="v1.2.0",
                      font=ctk.CTkFont(size=11, weight="bold"),
                      text_color=("#3498db", "#5dade2")).pack(anchor="w")
 
@@ -162,21 +162,21 @@ class MainApplication(ctk.CTk):
         
         self.tabview.pack(fill="both", expand=True, padx=15, pady=(15, 15))
 
+        # Use a bound lambda so all tabs share the same log_append reference
+        # even though log_tab is created last (after all other tabs visually)
+        def _log_append(msg: str):
+            if hasattr(self, 'log_tab'):
+                self.log_tab.append(msg)
+
         self.manage_tab = ManageTab(
             self.tabview.add("👥 账号管理"), self.account_manager,
-            self._update_status, self._update_status_count
+            _log_append, self._update_status, self._update_status_count
         )
 
         self.import_tab = BatchImportTab(
             self.tabview.add("📥 批量导入"), self.account_manager,
             self._update_status, self._update_status_count
         )
-
-        # Use a bound lambda so all tabs share the same log_append reference
-        # even though log_tab is created last (after all other tabs visually)
-        def _log_append(msg: str):
-            if hasattr(self, 'log_tab'):
-                self.log_tab.append(msg)
 
         common_args = (self.account_manager, _log_append,
                        self._update_status, self._update_status_count)

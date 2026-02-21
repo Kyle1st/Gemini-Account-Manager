@@ -7,7 +7,7 @@
 ; ═══════════════════════════════════════════════════════════════
 
 #define MyAppName "Gemini Account Manager"
-#define MyAppVersion "2.0"
+#define MyAppVersion "1.2"
 #define MyAppPublisher "Gemini Account Manager"
 #define MyAppExeName "GeminiAccountManager.exe"
 #define MyAppSourceDir "dist\GeminiAccountManager"
